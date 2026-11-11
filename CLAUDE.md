@@ -15,7 +15,9 @@ Personal portfolio SPA for Freddy Martínez, hosted on GitHub Pages as a **user 
 ## Layout
 - `src/data.ts`: **all personal content** (profile, bio, email, links, projects). Edit content here, not in components.
 - `src/App.tsx`: single-page layout (hero, About, Projects, Contact, footer) with anchor-link nav (no router).
-- `src/components/Scene.tsx`: R3F canvas (distorted icosahedron + stars, pointer-driven tilt). It is **lazy-loaded** with `React.lazy` so the text renders before three.js (~245 KB gzip) arrives. Keep it lazy.
+- `src/components/Gir.tsx`: the hero character, GIR (from Invader Zim) in his dog suit, built from primitives. Shading uses `meshToonMaterial` with a 2-step ramp, and ink lines are a custom inverted-hull outline (`Part` component + `inkMaterial`). drei `Outlines` did not render, which is why it isn't used. It animates by itself (bob, head tilt, blink, antenna, arms, legs, tail), its head follows the pointer, and clicking it triggers "duty mode" (red eyes, jump spin, right-arm wave). Reference image: `public/Invader-Zim-Gir.png`. Target proportions: head about twice the body's height, eyes about half the head's height.
+- Visual checks: there's no browser access by default. Install Playwright in a temp dir (not the repo) and screenshot `http://localhost:5173/` with headless Chromium (`--use-angle=swiftshader` so WebGL works), with the pointer at a few positions, then compare with the reference image.
+- `src/components/Scene.tsx`: R3F canvas (GIR + stars, pointer-driven tilt). It is **lazy-loaded** with `React.lazy` so the text renders before three.js (~245 KB gzip) arrives. Keep it lazy.
 - `public/`: static assets copied as-is (favicon).
 
 ## Deployment
