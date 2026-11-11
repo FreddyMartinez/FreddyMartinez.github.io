@@ -13,8 +13,8 @@ const COLORS = {
   metalDark: '#8a8a8a',
   eye: '#4cb89a',
   duty: '#ff2a3d',
-  suit: '#7cc436',
-  suitLight: '#b8e486',
+  suit: '#9bd94f',
+  suitLight: '#c6ec98',
   zipper: '#d2d4ca',
   ink: '#050505',
   white: '#ffffff',
@@ -27,7 +27,7 @@ const LINE = 0.028
 /* ------------------------------------------------------------------ */
 
 const toonRamp = (() => {
-  const tex = new THREE.DataTexture(new Uint8Array([120, 255]), 2, 1, THREE.RedFormat)
+  const tex = new THREE.DataTexture(new Uint8Array([150, 255]), 2, 1, THREE.RedFormat)
   tex.minFilter = tex.magFilter = THREE.NearestFilter
   tex.generateMipmaps = false
   tex.needsUpdate = true
@@ -79,33 +79,61 @@ function Part({ geo, color, ink = true, basic = false, ...props }: PartProps) {
 /* Geometry                                                            */
 /* ------------------------------------------------------------------ */
 
-// Tall rounded head whose lower part narrows into a chin, like the cartoon.
-// Built from an evenly subdivided box projected onto a rounded box, so the toon shadow edge stays smooth.
-function makeHead() {
-  const w = 1.4, h = 1.9, d = 1.05 + 0.1, r = 0.46, n = 28
-  const box = new THREE.BoxGeometry(w, h, d, n, n, n)
-  box.deleteAttribute('normal')
-  box.deleteAttribute('uv')
-  const g = mergeVertices(box)
-  const p = g.getAttribute('position')
-  const half = new THREE.Vector3(w / 2 - r, h / 2 - r, d / 2 - r)
-  const v = new THREE.Vector3()
-  const inner = new THREE.Vector3()
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i)
-    inner.copy(v).clamp(half.clone().negate(), half)
-    v.sub(inner).normalize().multiplyScalar(r).add(inner)
-    const yn = v.y / (h / 2) // -1..1
-    if (yn < 0.25) {
-      const s = 1 - 0.24 * Math.pow((0.25 - yn) / 1.25, 2)
-      v.x *= s
-      v.z *= s
+type SuperShape = {
+  w: number
+  h: number
+  d: number
+  /** Vertical profile exponents: 2 = round, higher = boxier. */
+  nTop: number
+  nBot: number
+  /** Cross-section exponents at the top and bottom. */
+  xzTop: number
+  xzBot: number
+  /** Width multipliers at the top and bottom. */
+  taperTop?: number
+  taperBot?: number
+}
+
+// Superellipsoid with separate roundness and taper for its top and bottom halves.
+// One smooth indexed mesh, so toon shadow edges and ink outlines stay clean.
+function superShape(o: SuperShape, rings = 48, segs = 72) {
+  const { w, h, d, nTop, nBot, xzTop, xzBot, taperTop = 1, taperBot = 1 } = o
+  const sp = (v: number, e: number) => Math.sign(v) * Math.pow(Math.abs(v), e)
+  const pos: number[] = []
+  const idx: number[] = []
+  for (let i = 0; i <= rings; i++) {
+    const phi = -Math.PI / 2 + (Math.PI * i) / rings
+    const sin = Math.sin(phi)
+    const cos = Math.max(Math.cos(phi), 0)
+    const nv = sin >= 0 ? nTop : nBot
+    const yn = sp(sin, 2 / nv)
+    const rho = Math.pow(cos, 2 / nv)
+    let k = (yn + 1) / 2
+    k = k * k * (3 - 2 * k)
+    const taper = THREE.MathUtils.lerp(taperBot, taperTop, k)
+    const nxz = THREE.MathUtils.lerp(xzBot, xzTop, k)
+    for (let j = 0; j < segs; j++) {
+      const th = (2 * Math.PI * j) / segs
+      pos.push((w / 2) * taper * rho * sp(Math.cos(th), 2 / nxz), (yn * h) / 2, (d / 2) * taper * rho * sp(Math.sin(th), 2 / nxz))
     }
-    p.setXYZ(i, v.x, v.y, v.z)
   }
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = i * segs + j
+      const b = i * segs + ((j + 1) % segs)
+      idx.push(a, a + segs, b, b, a + segs, b + segs)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setIndex(idx)
   g.computeVertexNormals()
   return g
 }
+
+// Head: boxy on top with a clear front and side face, narrowing into a round chin, like the cartoon.
+const makeHead = () =>
+  superShape({ w: 1.45, h: 1.9, d: 1.2, nTop: 6, nBot: 2.3, xzTop: 5, xzBot: 2.6, taperBot: 0.8 })
 
 // Tube along a curve that tapers from `r0` to `r1`.
 function taperedTube(curve: THREE.Curve<THREE.Vector3>, r0: number, r1: number, segs = 32, radial = 10) {
@@ -132,9 +160,9 @@ const ANTENNA_TIP = new THREE.Vector3(0.62, 0.78, -0.3)
 const GEO = {
   head: makeHead(),
   neck: new THREE.CylinderGeometry(0.11, 0.11, 0.2, 16),
-  eyeTube: new THREE.CylinderGeometry(0.4, 0.36, 0.26, 48),
-  eyeGroove: new THREE.TorusGeometry(0.39, 0.014, 6, 48),
-  lens: new THREE.CircleGeometry(0.382, 48),
+  eyeBase: new THREE.CylinderGeometry(0.36, 0.31, 0.26, 48),
+  eyeRim: new THREE.CylinderGeometry(0.44, 0.38, 0.15, 48),
+  lens: new THREE.CircleGeometry(0.42, 48),
   mouth: new THREE.CapsuleGeometry(0.014, 0.2, 4, 8),
   antenna: taperedTube(
     new THREE.QuadraticBezierCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.08, 0.55, -0.1), ANTENNA_TIP),
@@ -142,9 +170,10 @@ const GEO = {
     0.022,
   ),
   antennaTip: new THREE.SphereGeometry(0.085, 20, 16),
-  body: new RoundedBoxGeometry(0.8, 0.72, 0.7, 4, 0.14),
+  body: superShape({ w: 0.86, h: 0.95, d: 0.74, nTop: 5, nBot: 5, xzTop: 4.5, xzBot: 4.5, taperTop: 0.78, taperBot: 1.08 }, 32, 56),
+  zipTooth: new THREE.BoxGeometry(0.05, 0.014, 0.01),
   collar: new THREE.TorusGeometry(0.24, 0.07, 12, 32),
-  zipper: new RoundedBoxGeometry(0.09, 0.46, 0.04, 2, 0.015),
+  zipper: new RoundedBoxGeometry(0.09, 0.58, 0.04, 2, 0.015),
   zipPull: new RoundedBoxGeometry(0.11, 0.16, 0.03, 2, 0.012),
   pocket: new THREE.CircleGeometry(0.1, 24),
   sleeve: new THREE.CapsuleGeometry(0.085, 0.24, 6, 16),
@@ -152,11 +181,12 @@ const GEO = {
   hand: new THREE.SphereGeometry(0.095, 20, 16),
   thumb: new THREE.CapsuleGeometry(0.035, 0.06, 4, 10),
   hood: new RoundedBoxGeometry(1.15, 0.85, 1.0, 4, 0.26),
-  hoodOpening: new THREE.CircleGeometry(0.4, 32),
+  hoodOpening: new THREE.CircleGeometry(0.36, 32),
+  hoodRim: new THREE.TorusGeometry(0.37, 0.05, 10, 40),
   tongue: new RoundedBoxGeometry(0.2, 0.05, 0.24, 2, 0.02),
   dogEye: new THREE.SphereGeometry(0.34, 28, 20),
   dogPupil: new THREE.SphereGeometry(0.05, 12, 10),
-  leg: new THREE.CylinderGeometry(0.075, 0.05, 0.4, 12),
+  leg: new THREE.CylinderGeometry(0.08, 0.05, 0.34, 12),
   foot: new THREE.SphereGeometry(0.06, 12, 10),
   tail: taperedTube(
     new THREE.CatmullRomCurve3([
@@ -275,7 +305,7 @@ export default function Gir() {
   ] as const satisfies readonly (readonly [RefObject<THREE.Group | null>, number])[]
 
   return (
-    <group position={[x, -0.6, 0]} scale={scale}>
+    <group position={[x, -0.5, 0]} scale={scale}>
       <group
         ref={root}
         onClick={(e) => {
@@ -286,15 +316,21 @@ export default function Gir() {
         onPointerOut={setCursor('auto')}
       >
         {/* ---------- Body (dog suit) ---------- */}
-        <Part geo={GEO.body} color={COLORS.suit} position={[0, -0.4, 0]} />
+        <Part geo={GEO.body} color={COLORS.suit} position={[0, -0.5, 0]} />
         <Part geo={GEO.collar} color={COLORS.suitLight} position={[0, -0.03, 0.02]} rotation={[Math.PI / 2 - 0.15, 0, 0]} />
-        <Part geo={GEO.zipper} color={COLORS.zipper} position={[-0.14, -0.42, 0.355]} />
-        <Part geo={GEO.zipPull} color={COLORS.zipper} position={[-0.14, -0.13, 0.39]} rotation={[0.2, 0, 0.5]} />
-        <Part geo={GEO.pocket} color={COLORS.ink} ink={false} basic position={[0.15, -0.45, 0.352]} scale={[0.7, 1.2, 1]} />
+        {/* Zipper with teeth; the suit front leans back slightly, so these follow its slope. */}
+        <group position={[-0.14, -0.5, 0.352]} rotation={[-0.1, 0, 0]}>
+          <Part geo={GEO.zipper} color={COLORS.zipper} />
+          {[-0.2, -0.12, -0.04, 0.04, 0.12, 0.2].map((y) => (
+            <Part key={y} geo={GEO.zipTooth} color={COLORS.ink} ink={false} basic position={[0.02, y, 0.022]} />
+          ))}
+        </group>
+        <Part geo={GEO.zipPull} color={COLORS.zipper} position={[-0.16, -0.14, 0.36]} rotation={[0.2, 0, 0.5]} />
+        <Part geo={GEO.pocket} color={COLORS.ink} ink={false} basic position={[0.15, -0.52, 0.36]} rotation={[-0.1, 0, 0]} scale={[0.75, 1.4, 1]} />
 
         {/* ---------- Arms (green sleeves, little grey mitts) ---------- */}
         {arms.map(([ref, s]) => (
-          <group key={s} ref={ref} position={[s * 0.41, -0.14, 0.02]} rotation={[0, 0, s * 0.25]}>
+          <group key={s} ref={ref} position={[s * 0.37, -0.16, 0.02]} rotation={[0, 0, s * 0.25]}>
             <Part geo={GEO.sleeve} color={COLORS.suit} position={[0, -0.2, 0]} />
             <Part geo={GEO.cuff} color={COLORS.suitLight} position={[0, -0.36, 0]} />
             <Part geo={GEO.hand} color={COLORS.metal} position={[0, -0.45, 0]} />
@@ -304,9 +340,10 @@ export default function Gir() {
 
         {/* ---------- Hood (the dog head, pulled back) ---------- */}
         {/* Opening faces forward-up (where his head would go), so it peeks out beside the head. */}
-        <group position={[0.05, 0.14, -0.6]} rotation={[-0.75, 0, 0]} scale={0.85}>
+        <group position={[0.05, 0.1, -0.66]} rotation={[-0.75, 0, 0]}>
           <Part geo={GEO.hood} color={COLORS.suit} />
-          <Part geo={GEO.hoodOpening} color={COLORS.ink} ink={false} basic position={[0.04, 0.04, 0.502]} scale={[1.3, 0.95, 1]} />
+          <Part geo={GEO.hoodOpening} color={COLORS.ink} ink={false} basic position={[0.02, 0.02, 0.502]} scale={[1.3, 0.95, 1]} />
+          <Part geo={GEO.hoodRim} color={COLORS.suitLight} position={[0.02, 0.02, 0.5]} scale={[1.3, 0.95, 1]} />
           <Part geo={GEO.tongue} color={COLORS.tongue} position={[0.4, 0.22, 0.5]} rotation={[1.3, 0.35, -0.2]} />
           {/* Big googly dog eyes on the sides */}
           {[-1, 1].map((s) => (
@@ -318,15 +355,15 @@ export default function Gir() {
         </group>
 
         {/* ---------- Tail ---------- */}
-        <group ref={tail} position={[0.05, -0.72, -0.3]}>
+        <group ref={tail} position={[0.05, -0.86, -0.32]}>
           <Part geo={GEO.tail} color={COLORS.ink} basic ink={false} />
         </group>
 
         {/* ---------- Legs ---------- */}
         {legs.map(([ref, lx]) => (
-          <group key={lx} ref={ref} position={[lx, -0.74, 0.04]}>
-            <Part geo={GEO.leg} color={COLORS.ink} basic ink={false} position={[0, -0.2, 0]} />
-            <Part geo={GEO.foot} color={COLORS.ink} basic ink={false} position={[0, -0.4, 0]} />
+          <group key={lx} ref={ref} position={[lx, -0.9, 0.04]}>
+            <Part geo={GEO.leg} color={COLORS.ink} basic ink={false} position={[0, -0.17, 0]} />
+            <Part geo={GEO.foot} color={COLORS.ink} basic ink={false} position={[0, -0.34, 0]} />
           </group>
         ))}
 
@@ -335,13 +372,13 @@ export default function Gir() {
           <Part geo={GEO.neck} color={COLORS.metalDark} ink={false} position={[0, 0.02, 0]} />
           <Part geo={GEO.head} color={COLORS.metal} position={[0, 0.98, 0]} />
 
-          {/* Eyes: short tubes that stick out of the face, glowing lenses */}
+          {/* Eyes: flared, two-segment tubes that stick out of the face, with glowing lenses */}
           <group ref={eyes} position={[0, 0.72, 0]}>
             {[-1, 1].map((s, i) => (
-              <group key={s} position={[s * 0.37, 0, 0.44]} rotation={[0, s * 0.42, 0]}>
-                <Part geo={GEO.eyeTube} color={COLORS.metal} rotation={[Math.PI / 2, 0, 0]} />
-                <Part geo={GEO.eyeGroove} color={COLORS.ink} ink={false} basic position={[0, 0, 0.03]} />
-                <mesh geometry={GEO.lens} position={[0, 0, 0.132]}>
+              <group key={s} position={[s * 0.44, 0, 0.4]} rotation={[0, s * 0.6, 0]}>
+                <Part geo={GEO.eyeBase} color={COLORS.metalDark} position={[0, 0, 0.06]} rotation={[Math.PI / 2, 0, 0]} />
+                <Part geo={GEO.eyeRim} color={COLORS.metal} position={[0, 0, 0.25]} rotation={[Math.PI / 2, 0, 0]} />
+                <mesh geometry={GEO.lens} position={[0, 0, 0.327]}>
                   <meshStandardMaterial ref={glow(i)} color={COLORS.eye} emissive={COLORS.eye} emissiveIntensity={0.35} />
                 </mesh>
               </group>
@@ -349,10 +386,10 @@ export default function Gir() {
           </group>
 
           {/* Little mouth line */}
-          <Part geo={GEO.mouth} color={COLORS.ink} ink={false} basic position={[-0.06, 0.21, 0.42]} rotation={[-0.7, 0, Math.PI / 2 + 0.12]} />
+          <Part geo={GEO.mouth} color={COLORS.ink} ink={false} basic position={[-0.06, 0.3, 0.385]} rotation={[-0.75, 0, Math.PI / 2 + 0.12]} />
 
           {/* Antenna */}
-          <group ref={antenna} position={[0.32, 1.84, -0.18]}>
+          <group ref={antenna} position={[0.32, 1.88, -0.2]}>
             <Part geo={GEO.antenna} color={COLORS.metalDark} />
             <group position={ANTENNA_TIP}>
               <mesh geometry={GEO.antennaTip}>
